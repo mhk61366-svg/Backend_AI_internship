@@ -4,34 +4,54 @@ Ongoing weekly progression through FlyRank's Backend AI Engineering
 internship, moving from a basic FastAPI service toward RAG pipelines. 
 This repo is continued across weeks rather than split per-assignment, 
 so commit history reflects the actual iteration — from a single-file 
-in-memory API (Week 1) to a layered, Postgres-backed service (Week 2).
+in-memory API (Week 1) to a layered, Postgres-backed service (Week 2) 
+to a fully containerized stack (Week 3).
 
 ## Project structure
 
-\`\`\`
+```
 main.py                  # FastAPI routes (HTTP layer only)
 schemas.py                # Pydantic request/response models
 service.py                # Orchestration layer between routes and repository
 repository.py            # Repository interface (ABC) + InMemoryUserRepository
 postgres_repository.py   # Postgres-backed repository implementing the same interface
-postgres_db.py            # Connection pool setup (psycopg), reads DATABASE_URL from .env
+postgres_db.py            # Connection setup (psycopg), reads DATABASE_URL from .env
+init.sql                  # Table creation, auto-run by Postgres on first container start
+Dockerfile                # Builds the FastAPI app image
+docker-compose.yml         # Runs app + Postgres together, with a persistent volume
+.dockerignore              # Keeps .env and other non-runtime files out of the image
 requirements.txt
 .env.example              # Template for required environment variables
-\`\`\`
+```
 
-## Run locally
+## Run with Docker (recommended)
 
-\`\`\`bash
+```bash
+cp .env.example .env      # then fill in real values
+docker compose up --build
+```
+
+This starts both the FastAPI app and Postgres together. The `users` table 
+is created automatically on first run via `init.sql`; data persists across 
+restarts via a named Docker volume.
+
+Server runs at `http://localhost:8000`
+
+## Run locally without Docker
+
+```bash
 python -m venv api_env
 api_env\Scripts\activate      # Windows
 pip install -r requirements.txt
 uvicorn main:app --reload
-\`\`\`
+```
 
 Server runs at `http://127.0.0.1:8000`
 
-Requires a running Postgres instance and a `.env` file (copy `.env.example` 
-and fill in real values) with a `DATABASE_URL` connection string.
+Requires a running local Postgres instance and a `.env` file (copy 
+`.env.example` and fill in real values) with a `DATABASE_URL` connection 
+string pointing at `localhost` rather than `db` (see A3 notes below on 
+why the hostname differs between the two setups).
 
 ## Endpoints
 
@@ -41,12 +61,15 @@ and fill in real values) with a `DATABASE_URL` connection string.
 - `PUT /update_user/{id}` — updates a user; supports partial updates (only the fields sent are changed)
 - `DELETE /delete_user/{id}` — deletes a user by ID, 404 if not found
 
+All responses use a consistent `{"message": ..., "data": ...}` shape 
+(delete omits `data`, since there's nothing left to show).
+
 ## Test
 
-\`\`\`bash
-curl http://127.0.0.1:8000/get_users
-curl http://127.0.0.1:8000/get_user/1
-\`\`\`
+```bash
+curl http://localhost:8000/get_users
+curl http://localhost:8000/get_user/1
+```
 
 Or use Postman / any HTTP client against the endpoints above.
 
@@ -76,8 +99,11 @@ fundamentals, not persistence — no database was expected at this stage.
   than client-supplied — `POST /create_user` no longer accepts or expects 
   an `id` field.
 - Added a `UNIQUE` constraint on `email` at the database level.
-- Connection handling (`postgres_db.py`) uses a psycopg connection pool, 
-  not per-request bare connections.
+- Connection handling (`postgres_db.py`) opens a fresh connection per 
+  request via `get_connection()`, rather than sharing one long-lived 
+  connection across the app's lifetime — avoids the concurrency and 
+  dead-connection risks a single shared connection would carry under 
+  concurrent requests.
 - `.env` (gitignored) holds the real `DATABASE_URL`; `.env.example` is 
   committed with placeholder values.
 
@@ -96,3 +122,59 @@ verified — a `POST /create_user` with an email that already exists will
 likely surface as an unhandled 500 from the database's `UNIQUE` 
 constraint violation rather than a clean 4xx response. This needs a 
 try/except around the insert to return a proper `409 Conflict`.
+
+## Week 3 — Containerizing the stack (A3)
+
+**Note on scope:** the track's Week 3 assignment list included A2 
+(swapping storage to SQLite) ahead of A3 (Docker + Postgres). Given time 
+lost earlier to a technical setup issue, and since the track only 
+requires 5 completed assignments out of many plus the capstone, A2 was 
+intentionally skipped in favor of prioritizing A3, which was already 
+underway. No other assignment has been skipped.
+
+**What changed:**
+- Added a `Dockerfile` building the FastAPI app into its own image, 
+  running on `0.0.0.0:8000` so it's reachable from outside the container.
+- Added `docker-compose.yml` running two services together: `app` 
+  (the FastAPI image) and `db` (the official `postgres:16` image, no 
+  custom Dockerfile needed).
+- `db` uses a named Docker volume (`pgdata`) mounted at Postgres's data 
+  directory, so data survives container restarts and recreation.
+- `db` has a healthcheck (`pg_isready`) and `app`'s `depends_on` waits 
+  for `db` to report healthy, not just started — without this, `app` 
+  would occasionally start and try to connect before Postgres had 
+  finished initializing, and crash.
+- Added `init.sql`, mounted into Postgres's auto-init directory 
+  (`/docker-entrypoint-initdb.d/`). The official Postgres image runs any 
+  SQL file found there automatically, but only the first time its volume 
+  is empty — this is what lets a stranger clone the repo and get a 
+  working `users` table with zero manual setup.
+- `DATABASE_URL` and `POSTGRES_HOST` in `.env` now point at `db` (the 
+  Compose service name) instead of `localhost` — inside a Docker network, 
+  containers reach each other by service name, not `localhost`, which 
+  refers to the container itself.
+- Added `.dockerignore` so `.env` and other non-runtime files (venv, 
+  git history, screenshots) are never copied into the built image, even 
+  though they're already excluded from git via `.gitignore` — the two 
+  serve different purposes and neither substitutes for the other.
+- Adjusted response models (`schemas.py`, `main.py`) to match the 
+  `{"message": ..., "data": ...}` shape `service.py` returns — the earlier 
+  Week 2 message-wrapping change had left `response_model=User` on 
+  several routes still expecting the old flat shape, which threw 
+  `ResponseValidationError` until corrected.
+
+**How persistence was verified, two ways:**
+1. **Fresh-volume auto-init:** ran `docker compose down -v` (deletes the 
+   volume) then `docker compose up --build`. Confirmed via the `db` 
+   container's logs that `init.sql` executed automatically, and that all 
+   five endpoints worked immediately afterward with no manual database 
+   setup.
+2. **Restart without wiping:** created a user, ran `docker compose down` 
+   (volume preserved) then `docker compose up` again, and confirmed via 
+   `GET /get_user/{id}` that the row was still present.
+
+**How the full CRUD cycle was re-verified after containerizing:** all 
+five endpoints tested via Postman, including nonexistent-id cases 
+returning 404, against the containerized stack — same checklist as 
+Week 2, repeated against the new environment rather than assumed to 
+still hold.
