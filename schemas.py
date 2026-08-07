@@ -15,3 +15,14 @@ class UserUpdate(BaseModel):
     name: str | None = None
     age: int | None = None
     email: EmailStr | None = None
+
+class UserResponse(BaseModel):
+    message: str
+    data: User
+
+class UsersListResponse(BaseModel):
+    message: str
+    data: list[User]
+
+class DeleteResponse(BaseModel):
+    message: str
