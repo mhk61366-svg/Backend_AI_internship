@@ -22,7 +22,7 @@ def sign_up(credentials: AuthCredentials):
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": str(e)})
 
-@router.post("/auth/login")
+@router.post("/auth/login", status_code=200)
 def login(credentials: AuthCredentials):
     if not credentials.email or not credentials.password:
         raise HTTPException(status_code=400, detail={"error": "Email and password are required"})
@@ -42,10 +42,19 @@ def login(credentials: AuthCredentials):
         "refresh_token": response.session.refresh_token
     }
 
-@router.get("/public/info")
+@router.post("/auth/logout", status_code=204)
+def logout(user=Depends(get_current_user)):
+    supabase.auth.sign_out()
+    return
+
+@router.get("/public/info",status_code=200)
 def get_public_info():
     return {"message": "This is a public endpoint accessible without authentication."}
 
-@router.get("/protected/info")
+@router.get("/protected/info",status_code=200)
 def get_protected_info(user: dict = Depends(get_current_user)):
     return {"user id": user.id, "user email": user.email, "created_at": user.created_at}
+
+@router.get("/protected/dashboard",status_code=200)
+def get_dashboard(user: dict = Depends(get_current_user)):
+    return {"message": f"Welcome to your dashboard, {user.email}!"}
