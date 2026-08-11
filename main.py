@@ -2,11 +2,13 @@ from fastapi import FastAPI, HTTPException
 from service import UserService
 from postgres_repository import PostgresUserRepository
 from schemas import UserCreate, UserUpdate, UserResponse, UsersListResponse, DeleteResponse
+from auth_routes import router as auth_router
 
 repo = PostgresUserRepository()
 service = UserService(repo)
 
 app = FastAPI()
+app.include_router(auth_router)
 
 @app.get("/get_users", response_model=UsersListResponse)
 def get_users():
