@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException
 from supabase_client import supabase
+from fastapi import Header
 
 router = APIRouter()
 
@@ -40,3 +41,14 @@ def login(credentials: AuthCredentials):
         "access_token": response.session.access_token,
         "refresh_token": response.session.refresh_token
     }
+
+@router.get("/public/info")
+def get_public_info():
+    return {"message": "This is a public endpoint accessible without authentication."}
+
+@router.get("/protected/info")
+def get_protected_info(authorization: str = Header(None)):
+    if not authorization or not authorization.lower().startswith("Bearer ") or len(authorization.split(" ")) < 2:
+        raise HTTPException(status_code=401, detail={"error": "Access token is missing or invalid"})
+    token = authorization.split(" ")[1]
+    return {"token_received": bool(token)}
