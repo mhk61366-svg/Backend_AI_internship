@@ -1,41 +1,50 @@
 # Backend AI Engineering Internship — FlyRank
 
-Ongoing weekly progression through FlyRank's Backend AI Engineering 
-internship, moving from a basic FastAPI service toward RAG pipelines. 
-This repo is continued across weeks rather than split per-assignment, 
-so commit history reflects the actual iteration — from a single-file 
-in-memory API (Week 1) to a layered, Postgres-backed service (Week 2) 
-to a fully containerized stack (Week 3).
+Ongoing weekly progression through FlyRank's Backend AI Engineering
+internship, moving from a basic FastAPI service toward RAG pipelines.
+This repo is continued across weeks rather than split per-assignment,
+so commit history reflects the actual iteration — from a single-file
+in-memory API (Week 1) to a layered, Postgres-backed service (Week 2)
+to a fully containerized stack (Week 3) to a Supabase-authenticated
+API (Week 4 / BE-03).
 
 ## Project structure
 
 ```
-main.py                  # FastAPI routes (HTTP layer only)
+main.py                  # FastAPI app + existing CRUD routes (HTTP layer only)
 schemas.py                # Pydantic request/response models
 service.py                # Orchestration layer between routes and repository
 repository.py            # Repository interface (ABC) + InMemoryUserRepository
 postgres_repository.py   # Postgres-backed repository implementing the same interface
 postgres_db.py            # Connection setup (psycopg), reads DATABASE_URL from .env
 init.sql                  # Table creation, auto-run by Postgres on first container start
+auth_routes.py             # Auth endpoints (signup, login, logout, protected, public) — Week 4
+security.py                # Reusable auth dependency: verifies bearer token via Supabase — Week 4
+supabase_client.py         # Initializes the Supabase client from env vars — Week 4
 Dockerfile                # Builds the FastAPI app image
 docker-compose.yml         # Runs app + Postgres together, with a persistent volume
 .dockerignore              # Keeps .env and other non-runtime files out of the image
 requirements.txt
 .env.example              # Template for required environment variables
+screenshots/               # Swagger UI screenshots (Week 4)
 ```
 
 ## Run with Docker (recommended)
 
 ```bash
-cp .env.example .env      # then fill in real values
+cp .env.example .env      # then fill in real values — Postgres AND Supabase
 docker compose up --build
 ```
 
-This starts both the FastAPI app and Postgres together. The `users` table 
-is created automatically on first run via `init.sql`; data persists across 
-restarts via a named Docker volume.
+This starts both the FastAPI app and Postgres together. The `users`
+table is created automatically on first run via `init.sql`; data
+persists across restarts via a named Docker volume. Supabase Auth
+(used for Week 4's authentication routes) is a separate, external
+service — no local setup required for it beyond the two env vars
+below.
 
 Server runs at `http://localhost:8000`
+Interactive docs (Swagger UI): `http://localhost:8000/docs`
 
 ## Run locally without Docker
 
@@ -48,12 +57,22 @@ uvicorn main:app --reload
 
 Server runs at `http://127.0.0.1:8000`
 
-Requires a running local Postgres instance and a `.env` file (copy 
-`.env.example` and fill in real values) with a `DATABASE_URL` connection 
-string pointing at `localhost` rather than `db` (see A3 notes below on 
+Requires a running local Postgres instance and a `.env` file (copy
+`.env.example` and fill in real values) with a `DATABASE_URL` connection
+string pointing at `localhost` rather than `db` (see A3 notes below on
 why the hostname differs between the two setups).
 
+## Environment variables (`.env`)
+
+```
+DATABASE_URL=...          # Postgres connection string
+SUPABASE_URL=...          # Supabase project URL (Project Settings -> API)
+SUPABASE_KEY=...          # Supabase anon/publishable key — never the service_role key
+```
+
 ## Endpoints
+
+### App data (Postgres, Week 1–3)
 
 - `GET /get_users` — returns all users
 - `GET /get_user/{id}` — returns a single user by ID, 404 if not found
@@ -61,8 +80,26 @@ why the hostname differs between the two setups).
 - `PUT /update_user/{id}` — updates a user; supports partial updates (only the fields sent are changed)
 - `DELETE /delete_user/{id}` — deletes a user by ID, 404 if not found
 
-All responses use a consistent `{"message": ..., "data": ...}` shape 
+All responses use a consistent `{"message": ..., "data": ...}` shape
 (delete omits `data`, since there's nothing left to show).
+
+### Auth (Supabase, Week 4 / BE-03)
+
+| Route | Method | Auth required | Status codes |
+|---|---|---|---|
+| `/auth/signup` | POST | none | 201, 400 |
+| `/auth/login` | POST | none | 200, 400, 401 |
+| `/auth/logout` | POST | Bearer token | 204, 401 |
+| `/protected/profile` | GET | Bearer token | 200, 401 |
+| `/protected/dashboard` | GET | Bearer token | 200, 401 |
+| `/public/info` | GET | none | 200 |
+
+**Important design note:** Supabase Auth handles authentication
+entirely — accounts, credentials, password hashing, JWT issuance,
+and JWT verification. The Postgres `users` table above (Week 1–3) is
+unrelated app data and is not used for authentication in any way.
+There is no shared schema, no foreign key, and no sync logic between
+the two systems, by deliberate design.
 
 ## Test
 
@@ -71,110 +108,179 @@ curl http://localhost:8000/get_users
 curl http://localhost:8000/get_user/1
 ```
 
-Or use Postman / any HTTP client against the endpoints above.
+Or use Postman / any HTTP client against the endpoints above. For the
+Week 4 auth flow specifically, both curl/Postman (for `/auth/*` and
+`/protected/*`) and the browser-based Swagger "Authorize" flow at
+`/docs` (see screenshot below) were used to verify the full flow.
 
 ---
 
 ## Week 1 — Basic FastAPI setup
 
-Minimal FastAPI server with two GET endpoints, using an in-memory Python 
-dict as the data store. Scope was server setup and request/response 
+Minimal FastAPI server with two GET endpoints, using an in-memory Python
+dict as the data store. Scope was server setup and request/response
 fundamentals, not persistence — no database was expected at this stage.
 
 ## Week 2 — Repository pattern + Postgres integration
 
 **What changed:**
-- Refactored the single-file API into separate layers: routes (`main.py`) 
+- Refactored the single-file API into separate layers: routes (`main.py`)
   → service (`service.py`) → repository (`repository.py` / `postgres_repository.py`).
-- Introduced an abstract `User_Repository` interface. `InMemoryUserRepository` 
-  (Week 1's dict-based store) and `PostgresUserRepository` (new) both 
+- Introduced an abstract `User_Repository` interface. `InMemoryUserRepository`
+  (Week 1's dict-based store) and `PostgresUserRepository` (new) both
   implement it.
-- Swapped `InMemoryUserRepository()` for `PostgresUserRepository()` in 
-  `main.py` — **no changes were made to `service.py` or the route handlers 
-  in `main.py` to make this swap work**, confirming the interface boundary 
+- Swapped `InMemoryUserRepository()` for `PostgresUserRepository()` in
+  `main.py` — **no changes were made to `service.py` or the route handlers
+  in `main.py` to make this swap work**, confirming the interface boundary
   actually holds.
-- Added Pydantic request/response models (`schemas.py`): `UserCreate` and 
+- Added Pydantic request/response models (`schemas.py`): `UserCreate` and
   `UserUpdate` validate incoming request bodies; `User` shapes responses.
-- `id` is now auto-generated by Postgres (`SERIAL`/identity column) rather 
-  than client-supplied — `POST /create_user` no longer accepts or expects 
+- `id` is now auto-generated by Postgres (`SERIAL`/identity column) rather
+  than client-supplied — `POST /create_user` no longer accepts or expects
   an `id` field.
 - Added a `UNIQUE` constraint on `email` at the database level.
-- Connection handling (`postgres_db.py`) opens a fresh connection per 
-  request via `get_connection()`, rather than sharing one long-lived 
-  connection across the app's lifetime — avoids the concurrency and 
-  dead-connection risks a single shared connection would carry under 
+- Connection handling (`postgres_db.py`) opens a fresh connection per
+  request via `get_connection()`, rather than sharing one long-lived
+  connection across the app's lifetime — avoids the concurrency and
+  dead-connection risks a single shared connection would carry under
   concurrent requests.
-- `.env` (gitignored) holds the real `DATABASE_URL`; `.env.example` is 
+- `.env` (gitignored) holds the real `DATABASE_URL`; `.env.example` is
   committed with placeholder values.
 
 **How it was verified (via Postman, and by inspecting the table directly in pgAdmin, not just API responses):**
-- `GET /get_users` and `GET /get_user/{id}` — correct data returned; 
+- `GET /get_users` and `GET /get_user/{id}` — correct data returned;
   nonexistent id returns 404.
-- `POST /create_user` — row confirmed present in the actual Postgres 
+- `POST /create_user` — row confirmed present in the actual Postgres
   table afterward, not just a 200 response.
-- `PUT /update_user/{id}` — confirmed partial updates work (e.g. sending 
+- `PUT /update_user/{id}` — confirmed partial updates work (e.g. sending
   only `age`) without wiping the other fields; nonexistent id returns 404.
-- `DELETE /delete_user/{id}` — row confirmed removed from the table; 
+- `DELETE /delete_user/{id}` — row confirmed removed from the table;
   nonexistent id returns 404.
 
-**Known gap / next step:** duplicate-email handling has not yet been 
-verified — a `POST /create_user` with an email that already exists will 
-likely surface as an unhandled 500 from the database's `UNIQUE` 
-constraint violation rather than a clean 4xx response. This needs a 
+**Known gap / next step:** duplicate-email handling has not yet been
+verified — a `POST /create_user` with an email that already exists will
+likely surface as an unhandled 500 from the database's `UNIQUE`
+constraint violation rather than a clean 4xx response. This needs a
 try/except around the insert to return a proper `409 Conflict`.
 
 ## Week 3 — Containerizing the stack (A3)
 
-**Note on scope:** the track's Week 3 assignment list included A2 
-(swapping storage to SQLite) ahead of A3 (Docker + Postgres). Given time 
-lost earlier to a technical setup issue, and since the track only 
-requires 5 completed assignments out of many plus the capstone, A2 was 
-intentionally skipped in favor of prioritizing A3, which was already 
+**Note on scope:** the track's Week 3 assignment list included A2
+(swapping storage to SQLite) ahead of A3 (Docker + Postgres). Given time
+lost earlier to a technical setup issue, and since the track only
+requires 5 completed assignments out of many plus the capstone, A2 was
+intentionally skipped in favor of prioritizing A3, which was already
 underway. No other assignment has been skipped.
 
 **What changed:**
-- Added a `Dockerfile` building the FastAPI app into its own image, 
+- Added a `Dockerfile` building the FastAPI app into its own image,
   running on `0.0.0.0:8000` so it's reachable from outside the container.
-- Added `docker-compose.yml` running two services together: `app` 
-  (the FastAPI image) and `db` (the official `postgres:16` image, no 
+- Added `docker-compose.yml` running two services together: `app`
+  (the FastAPI image) and `db` (the official `postgres:16` image, no
   custom Dockerfile needed).
-- `db` uses a named Docker volume (`pgdata`) mounted at Postgres's data 
+- `db` uses a named Docker volume (`pgdata`) mounted at Postgres's data
   directory, so data survives container restarts and recreation.
-- `db` has a healthcheck (`pg_isready`) and `app`'s `depends_on` waits 
-  for `db` to report healthy, not just started — without this, `app` 
-  would occasionally start and try to connect before Postgres had 
+- `db` has a healthcheck (`pg_isready`) and `app`'s `depends_on` waits
+  for `db` to report healthy, not just started — without this, `app`
+  would occasionally start and try to connect before Postgres had
   finished initializing, and crash.
-- Added `init.sql`, mounted into Postgres's auto-init directory 
-  (`/docker-entrypoint-initdb.d/`). The official Postgres image runs any 
-  SQL file found there automatically, but only the first time its volume 
-  is empty — this is what lets a stranger clone the repo and get a 
+- Added `init.sql`, mounted into Postgres's auto-init directory
+  (`/docker-entrypoint-initdb.d/`). The official Postgres image runs any
+  SQL file found there automatically, but only the first time its volume
+  is empty — this is what lets a stranger clone the repo and get a
   working `users` table with zero manual setup.
-- `DATABASE_URL` and `POSTGRES_HOST` in `.env` now point at `db` (the 
-  Compose service name) instead of `localhost` — inside a Docker network, 
-  containers reach each other by service name, not `localhost`, which 
+- `DATABASE_URL` and `POSTGRES_HOST` in `.env` now point at `db` (the
+  Compose service name) instead of `localhost` — inside a Docker network,
+  containers reach each other by service name, not `localhost`, which
   refers to the container itself.
-- Added `.dockerignore` so `.env` and other non-runtime files (venv, 
-  git history, screenshots) are never copied into the built image, even 
-  though they're already excluded from git via `.gitignore` — the two 
+- Added `.dockerignore` so `.env` and other non-runtime files (venv,
+  git history, screenshots) are never copied into the built image, even
+  though they're already excluded from git via `.gitignore` — the two
   serve different purposes and neither substitutes for the other.
-- Adjusted response models (`schemas.py`, `main.py`) to match the 
-  `{"message": ..., "data": ...}` shape `service.py` returns — the earlier 
-  Week 2 message-wrapping change had left `response_model=User` on 
-  several routes still expecting the old flat shape, which threw 
+- Adjusted response models (`schemas.py`, `main.py`) to match the
+  `{"message": ..., "data": ...}` shape `service.py` returns — the earlier
+  Week 2 message-wrapping change had left `response_model=User` on
+  several routes still expecting the old flat shape, which threw
   `ResponseValidationError` until corrected.
 
 **How persistence was verified, two ways:**
-1. **Fresh-volume auto-init:** ran `docker compose down -v` (deletes the 
-   volume) then `docker compose up --build`. Confirmed via the `db` 
-   container's logs that `init.sql` executed automatically, and that all 
-   five endpoints worked immediately afterward with no manual database 
+1. **Fresh-volume auto-init:** ran `docker compose down -v` (deletes the
+   volume) then `docker compose up --build`. Confirmed via the `db`
+   container's logs that `init.sql` executed automatically, and that all
+   five endpoints worked immediately afterward with no manual database
    setup.
-2. **Restart without wiping:** created a user, ran `docker compose down` 
-   (volume preserved) then `docker compose up` again, and confirmed via 
+2. **Restart without wiping:** created a user, ran `docker compose down`
+   (volume preserved) then `docker compose up` again, and confirmed via
    `GET /get_user/{id}` that the row was still present.
 
-**How the full CRUD cycle was re-verified after containerizing:** all 
-five endpoints tested via Postman, including nonexistent-id cases 
-returning 404, against the containerized stack — same checklist as 
-Week 2, repeated against the new environment rather than assumed to 
+**How the full CRUD cycle was re-verified after containerizing:** all
+five endpoints tested via Postman, including nonexistent-id cases
+returning 404, against the containerized stack — same checklist as
+Week 2, repeated against the new environment rather than assumed to
 still hold.
+
+## Week 4 — Supabase Auth: signup, login, protected routes (BE-03)
+
+**Goal:** add authentication on top of the existing containerized stack
+using Supabase as the identity provider — sign up, log in, log out,
+verify JWTs, and protect specific routes — without writing any
+password-hashing or token-signing logic directly.
+
+**What changed:**
+- Added `supabase_client.py`: initializes a Supabase client from
+  `SUPABASE_URL` and `SUPABASE_KEY` (the `anon`/publishable key —
+  never the `service_role` key, which bypasses all security and must
+  stay out of client-facing code entirely).
+- Added `auth_routes.py`, wired into `main.py` via
+  `app.include_router(auth_router)`. Kept as a separate file rather
+  than merged into `main.py` to avoid mixing auth concerns with the
+  existing CRUD routes in one file.
+- Added `security.py`: a single reusable `get_current_user` FastAPI
+  dependency that extracts the bearer token and verifies it via a live
+  call to `supabase.auth.get_user(token)` — not local JWT decoding.
+  Local decoding was evaluated and deliberately rejected: it can't
+  detect a token Supabase has revoked server-side (e.g. after logout),
+  only that a signature is mathematically valid.
+- `/protected/profile` and `/protected/dashboard` both use the exact
+  same `get_current_user` dependency — confirming the auth check is a
+  genuinely reusable guard, not duplicated per route.
+- **Design decision on data separation:** Supabase Auth is the sole
+  system responsible for authentication. The existing Postgres `users`
+  table (Week 2) is unrelated app data and stays completely untouched
+  by this feature — no UUID-keying, no sync logic, no shared schema.
+  This was a deliberate choice to avoid conflating two systems that
+  would otherwise both think they own "the user."
+- Correct status codes implemented throughout: `201` signup, `200`
+  login/read, `204` logout, `400` missing input, `401` missing/invalid/
+  expired token — each error returns a JSON body with an `error` field.
+- Swagger UI (`/docs`) automatically shows the Authorize padlock on all
+  protected routes — this comes from FastAPI's `HTTPBearer` scheme used
+  inside `security.py`, no separate Swagger configuration was needed.
+
+**How it was verified:**
+- Full signup → login → protected-route flow tested via Postman
+  (curl was used initially; PowerShell's built-in `curl` alias maps to
+  `Invoke-WebRequest`, which doesn't accept standard curl flags, so
+  `curl.exe` or Postman were used instead).
+- Deliberately tampered token (one character changed) tested against
+  `/protected/profile` — confirmed `401`, not a silent pass.
+- Confirmed `/protected/dashboard` works off the same dependency as
+  `/protected/profile` with zero new auth code written.
+- Full flow re-verified a second time via the browser: `/docs` →
+  Authorize with a real token → "Try it out" on `/protected/profile` →
+  confirmed `200` from the browser, not just curl/Postman.
+- Confirmed via `git log --all --full-history -- .env` that `.env` has
+  never entered git history.
+
+**Swagger UI screenshots:**
+
+<!-- TODO: add screenshots below, e.g.
+(screenshots/swagger-lock-icon.png)
+(screenshots/swagger-protected_routes_accessed.png)
+(screenshots/swagger-login_success.png)
+-->
+
+**Known gap:** the stretch goals (a real `403` authorization case,
+refresh-token endpoint, and rate-limiting on `/auth/login`) were not
+implemented — only the core Stage 0–6 requirements were built for this
+submission.
