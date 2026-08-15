@@ -1,0 +1,13 @@
+﻿# Local scraper output
+__pycache__/
+*.py[cod]
+*.log
+output/
+downloads/
+*.html
+*.json
+*.csv
+
+# Optional temp files
+temp/
+cache/
