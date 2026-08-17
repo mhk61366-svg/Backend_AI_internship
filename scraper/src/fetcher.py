@@ -21,6 +21,7 @@ def fetch(url: str, cache_key: str) -> tuple[str, int]:
         return html, 200
 
     response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
+    response.encoding = "utf-8"  # ensure consistent encoding for text content
     print(f"FETCH      {url}  status={response.status_code}  size={len(response.text)}")
 
     if response.status_code != 200:
