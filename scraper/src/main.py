@@ -1,7 +1,12 @@
 from fetcher import fetch
 from extractor import get_book_links, get_book_record, get_next_page_url
 from bs4 import BeautifulSoup
+from models import BookRecord, convert_price_to_float
+import json
+import os
 
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "output")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 if __name__ == "__main__":
     page_url = "https://books.toscrape.com/catalogue/page-1.html"
@@ -35,20 +40,26 @@ if __name__ == "__main__":
         record = get_book_record(book_html, book_url, page_url)
         records.append(record)
 
-    print(
-        "First record:\n"
-        + "=" * 60
-        + "\n"
-        + "\n".join(
-            f"{key.replace('_', ' ').title()}: "
-            + (
-                " ".join(str(value).split()[:30]) + "..."
-                if key.lower() == "description" and isinstance(value, str) and len(str(value).split()) > 30
-                else str(value)
-            )
-            for key, value in records[0].items()
-        )
-        + "\n"
-        + "=" * 60
-    )
-    print(f"detail_pages={len(records)}")
+    valid_records = []
+    error_records = []
+    seen_urls = set()
+
+    for raw in records:
+        if raw["product_url"] in seen_urls:
+            continue
+        seen_urls.add(raw["product_url"])
+
+        try:
+            price_gbp = convert_price_to_float(raw["price_text"])
+            book = BookRecord(**raw, price_gbp=price_gbp)
+            valid_records.append(book.model_dump())
+        except Exception as e:
+            error_records.append({"record": raw, "reason": str(e)})
+
+    with open(os.path.join(OUTPUT_DIR, "books.json"), "w", encoding="utf-8") as f:
+        json.dump(valid_records, f, indent=2)
+
+    with open(os.path.join(OUTPUT_DIR, "errors.json"), "w", encoding="utf-8") as f:
+        json.dump(error_records, f, indent=2)
+
+    print(f"valid={len(valid_records)} errors={len(error_records)}")
