@@ -20,15 +20,25 @@ def fetch(url: str, cache_key: str) -> tuple[str, int]:
         print(f"CACHE HIT  {cache_key}  size={len(html)}")
         return html, 200
 
-    response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
-    response.encoding = "utf-8"  # ensure consistent encoding for text content
-    print(f"FETCH      {url}  status={response.status_code}  size={len(response.text)}")
+    attempt = 0
+    while True:
+        try:
+            response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
+        except requests.RequestException as e:
+            print(f"FAIL {url} error={e}")
+            return "", 0
 
-    if response.status_code != 200:
-        return "", response.status_code
+        print(f"FETCH {url} status={response.status_code} size={len(response.text)}")
 
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(response.text)
+        if response.status_code == 200:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(response.text)
+            time.sleep(DELAY)
+            return response.text, 200
 
-    time.sleep(DELAY)  # politeness delay — only after a real network request
-    return response.text, 200
+        if response.status_code >= 500 and attempt < retries:
+            attempt += 1
+            time.sleep(1)
+            continue
+
+        return "", response.status_code  # 404, 403, or retries exhausted — don't retry these
