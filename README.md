@@ -27,6 +27,15 @@ docker-compose.yml         # Runs app + Postgres together, with a persistent vol
 requirements.txt
 .env.example              # Template for required environment variables
 screenshots/               # Swagger UI screenshots (Week 4)
+llm_client.py              # OpenRouter client, timeout, backoff-retry, cost logging — Week 7
+llm_schema.py               # Pydantic schema + closed enums for triage output — Week 7
+llm_routes.py                # POST /triage endpoint: stub mode, parse/validate/repair — Week 7
+JOB-CARD.md                  # Triage endpoint contract: input, output, rules — Week 7
+prompts/                     # Versioned prompt files — Week 7
+  triage-v1.md
+evals/                       # Hand-labelled test cases + scoring script — Week 7
+  cases.json
+  run_eval.py
 ```
 
 ## Run with Docker (recommended)
@@ -68,6 +77,11 @@ why the hostname differs between the two setups).
 DATABASE_URL=...          # Postgres connection string
 SUPABASE_URL=...          # Supabase project URL (Project Settings -> API)
 SUPABASE_KEY=...          # Supabase anon/publishable key — never the service_role key
+LLM_BASE_URL=...           # OpenRouter API base URL
+LLM_API_KEY=...            # OpenRouter key
+LLM_MODEL=...              # openai/gpt-oss-20b:free
+LLM_STUB=                  # set to 1 to bypass the model entirely during dev/testing
+LLM_ENABLED=                # set to false to trigger the kill switch fallback
 ```
 
 ## Endpoints
@@ -100,6 +114,17 @@ and JWT verification. The Postgres `users` table above (Week 1–3) is
 unrelated app data and is not used for authentication in any way.
 There is no shared schema, no foreign key, and no sync logic between
 the two systems, by deliberate design.
+
+### LLM-assisted triage (OpenRouter, Week 7 / A17)
+
+| Route | Method | Auth required | Status codes |
+|---|---|---|---|
+| `/triage` | POST | none | 200, 400, 422, 504 |
+
+**Important naming note:** this is a single-shot classification call —
+one request in, one structured answer out, no conversation state. It
+is not a chatbot and not an agent.
+
 
 ## Test
 
@@ -284,3 +309,55 @@ password-hashing or token-signing logic directly.
 refresh-token endpoint, and rate-limiting on `/auth/login`) were not
 implemented — only the core Stage 0–6 requirements were built for this
 submission.
+
+## Week 7 — LLM behind the API (A17) — in progress
+
+**Goal:** add one new endpoint that classifies a support message into
+a category and urgency, using an LLM as the classification step,
+wrapped with schema validation, a repair retry, a timeout, retry
+policy, cost logging, and a kill switch — same defensive-input
+principle as Week 2's untrusted-data handling, applied to model output
+instead of client input.
+
+**Provider setup:**
+- Provider: OpenRouter (`https://openrouter.ai/api/v1`)
+- Model: `openai/gpt-oss-20b:free` — pinned explicitly rather than
+  using `openrouter/free` (the auto-router), because the auto-router
+  can silently swap the underlying model between calls, which would
+  make eval scores incomparable run-to-run.
+- Categories: `billing`, `fraud`, `feature`, `other` — see
+  `JOB-CARD.md` for the full contract, rules, and sample inputs/outputs.
+
+**What changed (Stages 0–2 so far):**
+- Added `JOB-CARD.md` defining the endpoint's input, output shape,
+  closed category/urgency lists, "must never" rules, and sample
+  input/output pairs.
+- Added `llm_schema.py`: `TriageResult` with closed `Category` and
+  `Urgency` enums — same pattern as Week 2's Pydantic request/response
+  models, applied to model output instead of client input.
+- Added `POST /triage` in `llm_routes.py`, with `LLM_STUB=1` returning
+  a hardcoded schema-valid response and zero model calls — verified
+  via Postman: stub mode responded in ~15ms with fixed values;
+  real mode (stub unset) responded in ~7s with a genuine model
+  judgement, confirming the two code paths are actually distinct.
+- Added `prompts/triage-v1.md` as a versioned file (not a string
+  inside the route) — role, exact output shape, rules, when-unsure
+  instruction, and worked examples for all four categories.
+- Added `llm_client.py`, separating the model call itself from
+  routing logic, ahead of Stage 4's retry/backoff logic being layered
+  on top of it.
+
+**Stage 2 observation — raw model output on 3 real inputs:**
+
+Tested 3 real inputs against the live model call. All 3 returned clean, unwrapped JSON matching the LLM_Response schema exactly — no markdown fences, no leading/trailing commentary. Did not observe the fence-wrapping behavior the assignment warns about for free models, at least across this sample.
+
+**How it was verified so far:**
+- Confirmed stub mode and real mode produce distinguishable results
+  (response time and content) rather than assuming they matched by
+  coincidence.
+
+**Known gap — in progress:** Stages 3–5 (parse/validate/repair,
+timeout/retry/cost-log/kill-switch, and the 8-case eval set) are not
+yet built. This section will be completed once those stages are
+verified, following the same standard as Weeks 1–4 — real terminal
+output and Postman results before anything is marked done.
