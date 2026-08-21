@@ -18,12 +18,17 @@ def extract_json(raw: str) -> dict:
 
 @router.post("/llm", response_model=LLM_Response)
 def triage_classifier(body: LLM_Request):
+    if os.environ.get("LLM_ENABLED", "true").lower() == "false":
+        return LLM_Response(category="other", urgency="low", confidence=0.0,
+                             reason="LLM disabled via kill switch")
+
     if os.environ.get("LLM_STUB") == "1":
-        return LLM_Response(category="other", urgency="low", confidence=0.5, reason="stub response, no model called")
+        return LLM_Response(category="other", urgency="low", confidence=0.5,
+                             reason="stub response, no model called")
 
     try:
         raw = call_model(body.text)
-    except RateLimitError as e:
+    except RateLimitError:
         raise HTTPException(status_code=429, detail="rate limited by provider, try again shortly")
 
     try:
@@ -31,11 +36,11 @@ def triage_classifier(body: LLM_Request):
         return result
     except (ValidationError, ValueError, json.JSONDecodeError) as e:
         repair_note = (
-        f"Your previous answer was rejected for this reason: {e}. "
-        f"Your previous answer was: {raw}. Return only corrected JSON matching the schema."
+            f"Your previous answer was rejected for this reason: {e}. "
+            f"Your previous answer was: {raw}. Return only corrected JSON matching the schema."
         )
         try:
-            raw2 = call_model(body.text, repair_note=repair_note)
+            raw2 = call_model(body.text, repair_note=repair_note, repaired=True)
         except RateLimitError:
             raise HTTPException(status_code=429, detail="rate limited by provider during repair retry")
         try:
