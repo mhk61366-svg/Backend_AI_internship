@@ -9,7 +9,7 @@ class Category(str, Enum):
 
 class Urgency(str, Enum):
     low = "low"
-    medium = "medium"
+    normal = "normal"
     high = "high"
 
 class LLM_Request(BaseModel):

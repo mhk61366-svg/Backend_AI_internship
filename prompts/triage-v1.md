@@ -5,7 +5,7 @@ You classify customer support messages for a small SaaS company.
 # Output shape
 Return ONLY a JSON object with exactly these fields:
 {
-  "category": one of ["billing", "fraud", "feature", "other"],
+  "category": one of ["billing", "fraud", "feature", "other"]
   "urgency": one of ["low", "normal", "high"],
   "confidence": a number between 0.0 and 1.0,
   "reason": "one short sentence"
