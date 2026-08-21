@@ -1,0 +1,10 @@
+[
+  {"input": "I was charged twice this month for the same plan", "expected_category": "billing"},
+  {"input": "Someone logged into my account from a country I've never visited and changed my password", "expected_category": "fraud"},
+  {"input": "Could you add a dark mode option?", "expected_category": "feature"},
+  {"input": "asdkfj random text nothing", "expected_category": "other"},
+  {"input": "It's kind of slow sometimes I guess, not sure why", "expected_category": "other"},
+  {"input": "My card was declined but you still say I owe money", "expected_category": "billing"},
+  {"input": "I didn't authorize this charge and I want it investigated, not just refunded", "expected_category": "fraud"},
+  {"input": "Would be great if we could export to CSV", "expected_category": "feature"}
+]
